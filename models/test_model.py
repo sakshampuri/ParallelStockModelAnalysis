@@ -178,35 +178,30 @@ def forecast():
     return deep_future
 
 
-results = []
-for i in range(simulation_size):
-    print('simulation %d' % (i + 1))
-    results.append(forecast())
-
-date_ori = pd.to_datetime(df.iloc[:, 0]).tolist()
-for i in range(test_size):
-    date_ori.append(date_ori[-1] + timedelta(days=1))
-date_ori = pd.Series(date_ori).dt.strftime(date_format='%Y-%m-%d').tolist()
-date_ori[-5:]
-
-accepted_results = []
-for r in results:
-    if (np.array(r[-test_size:]) < np.min(df['Close'])).sum() == 0 and \
-            (np.array(r[-test_size:]) > np.max(df['Close']) * 2).sum() == 0:
-        accepted_results.append(r)
-len(accepted_results)
-
-accuracies = [calculate_accuracy(
-    df['Close'].values, r[:-test_size]) for r in accepted_results]
-
-plt.figure(figsize=(15, 5))
-for no, r in enumerate(accepted_results):
-    plt.plot(r, label='forecast %d' % (no + 1))
-plt.plot(df['Close'], label='true trend', c='black')
-plt.legend()
-plt.title('average accuracy: %.4f' % (np.mean(accuracies)))
-
-x_range_future = np.arange(len(results[0]))
-plt.xticks(x_range_future[::30], date_ori[::30])
-
-plt.show()
+def run():
+    results = []
+    for i in range(simulation_size):
+        print('simulation %d' % (i + 1))
+        results.append(forecast())
+    date_ori = pd.to_datetime(df.iloc[:, 0]).tolist()
+    for i in range(test_size):
+        date_ori.append(date_ori[-1] + timedelta(days=1))
+    date_ori = pd.Series(date_ori).dt.strftime(date_format='%Y-%m-%d').tolist()
+    date_ori[-5:]
+    accepted_results = []
+    for r in results:
+        if (np.array(r[-test_size:]) < np.min(df['Close'])).sum() == 0 and \
+                (np.array(r[-test_size:]) > np.max(df['Close']) * 2).sum() == 0:
+            accepted_results.append(r)
+    len(accepted_results)
+    accuracies = [calculate_accuracy(
+        df['Close'].values, r[:-test_size]) for r in accepted_results]
+    plt.figure(figsize=(15, 5))
+    for no, r in enumerate(accepted_results):
+        plt.plot(r, label='forecast %d' % (no + 1))
+    plt.plot(df['Close'], label='true trend', c='black')
+    plt.legend()
+    plt.title('average accuracy: %.4f' % (np.mean(accuracies)))
+    x_range_future = np.arange(len(results[0]))
+    plt.xticks(x_range_future[::30], date_ori[::30])
+    plt.show()
