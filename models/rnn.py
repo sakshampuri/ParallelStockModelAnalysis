@@ -1,75 +1,69 @@
-from tqdm import tqdm
-from datetime import timedelta
-from datetime import datetime
-from sklearn.preprocessing import MinMaxScaler
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
 import sys
 import warnings
 
 if not sys.warnoptions:
     warnings.simplefilter('ignore')
-
 import tensorflow as tf
+
 tf.compat.v1.disable_eager_execution()
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from datetime import datetime
+from datetime import timedelta
+from tqdm import tqdm
+
 sns.set()
 tf.compat.v1.random.set_random_seed(1234)
 
-df = pd.read_csv('../dataset/GOOG-year.csv' if __name__ == "__main__" else './dataset/GOOG-year.csv')
+df = pd.read_csv('./dataset/GOOG-year.csv')
 df.head()
 
 minmax = MinMaxScaler().fit(df.iloc[:, 4:5].astype('float32'))  # Close index
 df_log = minmax.transform(df.iloc[:, 4:5].astype('float32'))  # Close index
 df_log = pd.DataFrame(df_log)
 df_log.head()
-simulation_size = 2
-num_layers = 1
-size_layer = 128
-timestamp = 5
-epoch = 300
-dropout_rate = 0.8
-test_size = 30
-learning_rate = 0.01
 
-df_train = df_log
-df.shape, df_train.shape
+test_size = 30
+simulation_size = 2
+
+df_train = df_log.iloc[:-test_size]
+df_test = df_log.iloc[-test_size:]
+df.shape, df_train.shape, df_test.shape
 
 
 class Model:
     def __init__(
-        self,
-        learning_rate,
-        num_layers,
-        size,
-        size_layer,
-        output_size,
-        forget_bias=0.1,
+            self,
+            learning_rate,
+            num_layers,
+            size,
+            size_layer,
+            output_size,
+            forget_bias=0.1,
     ):
         def lstm_cell(size_layer):
-            return tf.compat.v1.nn.rnn_cell.LSTMCell(size_layer, state_is_tuple=False)
+            return tf.compat.v1.nn.rnn_cell.GRUCell(size_layer)
 
         rnn_cells = tf.compat.v1.nn.rnn_cell.MultiRNNCell(
             [lstm_cell(size_layer) for _ in range(num_layers)],
             state_is_tuple=False,
         )
-        self.X = tf.compat.v1.placeholder(
-            tf.compat.v1.float32, (None, None, size))
-        self.Y = tf.compat.v1.placeholder(
-            tf.compat.v1.float32, (None, output_size))
+        self.X = tf.compat.v1.placeholder(tf.compat.v1.float32, (None, None, size))
+        self.Y = tf.compat.v1.placeholder(tf.compat.v1.float32, (None, output_size))
         drop = tf.compat.v1.nn.rnn_cell.DropoutWrapper(
             rnn_cells, output_keep_prob=forget_bias
         )
         self.hidden_layer = tf.compat.v1.placeholder(
-            tf.compat.v1.float32, (None, num_layers * 2 * size_layer)
+            tf.float32, (None, num_layers * size_layer)
         )
         self.outputs, self.last_state = tf.compat.v1.nn.dynamic_rnn(
             drop, self.X, initial_state=self.hidden_layer, dtype=tf.compat.v1.float32
         )
         self.logits = tf.compat.v1.layers.dense(self.outputs[-1], output_size)
-        self.cost = tf.compat.v1.reduce_mean(
-            tf.compat.v1.square(self.Y - self.logits))
+        self.cost = tf.compat.v1.reduce_mean(tf.compat.v1.square(self.Y - self.logits))
         self.optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate).minimize(
             self.cost
         )
@@ -92,6 +86,15 @@ def anchor(signal, weight):
     return buffer
 
 
+num_layers = 1
+size_layer = 128
+timestamp = 5
+epoch = 300
+dropout_rate = 0.8
+future_day = test_size
+learning_rate = 0.01
+
+
 def forecast():
     tf.compat.v1.reset_default_graph()
     modelnn = Model(
@@ -103,7 +106,7 @@ def forecast():
 
     pbar = tqdm(range(epoch), desc='train loop')
     for i in pbar:
-        init_value = np.zeros((1, num_layers * 2 * size_layer))
+        init_value = np.zeros((1, num_layers * size_layer))
         total_loss, total_acc = [], []
         for k in range(0, df_train.shape[0] - 1, timestamp):
             index = min(k + timestamp, df_train.shape[0] - 1)
@@ -112,8 +115,7 @@ def forecast():
             )
             batch_y = df_train.iloc[k + 1: index + 1, :].values
             logits, last_state, _, loss = sess.run(
-                [modelnn.logits, modelnn.last_state,
-                    modelnn.optimizer, modelnn.cost],
+                [modelnn.logits, modelnn.last_state, modelnn.optimizer, modelnn.cost],
                 feed_dict={
                     modelnn.X: batch_x,
                     modelnn.Y: batch_y,
@@ -127,11 +129,10 @@ def forecast():
 
     future_day = test_size
 
-    output_predict = np.zeros(
-        (df_train.shape[0] + future_day, df_train.shape[1]))
+    output_predict = np.zeros((df_train.shape[0] + future_day, df_train.shape[1]))
     output_predict[0] = df_train.iloc[0]
     upper_b = (df_train.shape[0] // timestamp) * timestamp
-    init_value = np.zeros((1, num_layers * 2 * size_layer))
+    init_value = np.zeros((1, num_layers * size_layer))
 
     for k in range(0, (df_train.shape[0] // timestamp) * timestamp, timestamp):
         out_logits, last_state = sess.run(
@@ -174,40 +175,27 @@ def forecast():
         date_ori.append(date_ori[-1] + timedelta(days=1))
 
     output_predict = minmax.inverse_transform(output_predict)
-    deep_future = anchor(output_predict[:, 0], 0.4)
+    deep_future = anchor(output_predict[:, 0], 0.3)
 
-    return deep_future
+    return deep_future[-test_size:]
 
 
-def run():
-    results = []
-    for i in range(simulation_size):
-        print('simulation %d' % (i + 1))
-        now = datetime.now()
+results = []
+for i in range(simulation_size):
+    print('simulation %d' % (i + 1))
+    now = datetime.now()
 
-        current_time = now.strftime("%H:%M:%S")
-        print("Current Time of simulation =", current_time)
-        results.append(forecast())
-    date_ori = pd.to_datetime(df.iloc[:, 0]).tolist()
-    for i in range(test_size):
-        date_ori.append(date_ori[-1] + timedelta(days=1))
-    date_ori = pd.Series(date_ori).dt.strftime(date_format='%Y-%m-%d').tolist()
-    date_ori[-5:]
-    accepted_results = []
-    for r in results:
-        if (np.array(r[-test_size:]) < np.min(df['Close'])).sum() == 0 and \
-                (np.array(r[-test_size:]) > np.max(df['Close']) * 2).sum() == 0:
-            accepted_results.append(r)
-    len(accepted_results)
-    accuracies = [calculate_accuracy(
-        df['Close'].values, r[:-test_size]) for r in accepted_results]
-    plt.figure(figsize=(15, 5))
-    for no, r in enumerate(accepted_results):
-        plt.plot(r, label='forecast %d' % (no + 1))
-    plt.plot(df['Close'], label='true trend', c='black')
-    plt.legend()
-    plt.title('average accuracy: %.4f' % (np.mean(accuracies)))
-    print('average accuracy: %.4f'%(np.mean(accuracies)))
-    x_range_future = np.arange(len(results[0]))
-    plt.xticks(x_range_future[::30], date_ori[::30])
-    plt.show()
+    current_time = now.strftime("%H:%M:%S")
+    print("Current Time of simulation start =", current_time)
+    results.append(forecast())
+
+accuracies = [calculate_accuracy(df['Close'].iloc[-test_size:].values, r) for r in results]
+
+plt.figure(figsize=(15, 5))
+for no, r in enumerate(results):
+    plt.plot(r, label='forecast %d' % (no + 1))
+plt.plot(df['Close'].iloc[-test_size:].values, label='true trend', c='black')
+plt.legend()
+plt.title('average accuracy: %.4f' % (np.mean(accuracies)))
+print('average accuracy: %.4f' % (np.mean(accuracies)))
+plt.show()
